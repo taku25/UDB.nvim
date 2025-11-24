@@ -2,6 +2,9 @@
 
 # Unreal Debugger Bridge 💓 Neovim
 
+<img width="1222" height="817" alt="udb-debug" src="https://github.com/user-attachments/assets/c4c15d6b-0428-4fa3-bd11-272c5e93f50c" />
+
+
 `UDB.nvim` は、Unreal Engine プロジェクトの C++ デバッグを Neovim 上で手軽に行うためのブリッジプラグインです。面倒な `launch.json` を手動で記述することなく、プロジェクト構造を解析して動的にデバッグ構成（Launch Config）を生成し、`nvim-dap` を介して即座にデバッグを開始できます。
 
 これは **Unreal Neovim Plugin sweet** のデバッグ機能を担うプラグインであり、ライブラリとして [UNL.nvim](https://github.com/taku25/UNL.nvim) と[Nvim-Dap](https://github.com/mfussenegger/nvim-dap)依存しています。
