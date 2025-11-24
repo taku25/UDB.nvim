@@ -31,9 +31,21 @@
   * Neovim v0.11.3 以上
   * [**UNL.nvim**](https://github.com/taku25/UNL.nvim) (**必須**)
   * [**nvim-dap**](https://github.com/mfussenegger/nvim-dap) (**必須**)
-  * **デバッガーアダプター:**
+  * **デバッガーアダプターサンプル:**
       * C++ デバッグのために `codelldb` (推奨) または `cpptools` のセットアップが必要です。
       * [mason.nvim](https://github.com/williamboman/mason.nvim) および [mason-nvim-dap.nvim](https://github.com/jay-babu/mason-nvim-dap.nvim) の利用を強く推奨します。
+      * **設定サンプル (codelldb):**
+        ```lua
+        dap.adapters.codelldb = {
+          type = 'server',
+          port = "${port}",
+          executable = {
+            command = vim.fn.stdpath("data") .. "/mason/bin/codelldb.cmd",
+            args = {"--port", "${port}"},
+            detached = false,
+          }
+        }
+        ```
 
 ## 🚀 インストール (Installation)
 

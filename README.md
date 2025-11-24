@@ -34,6 +34,18 @@ This is the core debugging plugin of the **Unreal Neovim Plugin Suite**, and it 
   * **Debugger Adapter:**
       * Setup of `codelldb` (recommended) or `cpptools` is required for C++ debugging.
       * Using [mason.nvim](https://github.com/williamboman/mason.nvim) and [mason-nvim-dap.nvim](https://github.com/jay-babu/mason-nvim-dap.nvim) is strongly recommended.
+      * **Configuration Sample (codelldb):**
+        ```lua
+        dap.adapters.codelldb = {
+          type = 'server',
+          port = "${port}",
+          executable = {
+            command = vim.fn.stdpath("data") .. "/mason/bin/codelldb.cmd",
+            args = {"--port", "${port}"},
+            detached = false,
+          }
+        }
+        ```
 
 ## 🚀 Installation
 
