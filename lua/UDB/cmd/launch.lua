@@ -26,8 +26,8 @@ local function get_adapter_type()
 end
 
 ---
--- UBTプロバイダーからプリセット一覧を取得し、UDB設定とマージする
-local function get_presets()
+-- UBTプロバイダーからプリセット一覧を取得し、UDB設定とマージする (Async)
+local function get_presets(callback)
   local combined_presets = {}
   local seen_names = {}
 
@@ -41,124 +41,104 @@ local function get_presets()
     end
   end
 
-  local ok, ubt_presets = provider.request("ubt.get_presets")
-  if ok and ubt_presets then
-    log.get().debug("Fetched %d presets from UBT provider.", #ubt_presets)
-    for _, p in ipairs(ubt_presets) do
-      if p.name and not seen_names[p.name] then
-        table.insert(combined_presets, p)
-        seen_names[p.name] = true
+  provider.request("ubt.get_presets", {}, function(ok, ubt_presets)
+      if ok and ubt_presets then
+        log.get().debug("Fetched %d presets from UBT provider.", #ubt_presets)
+        for _, p in ipairs(ubt_presets) do
+          if p.name and not seen_names[p.name] then
+            table.insert(combined_presets, p)
+            seen_names[p.name] = true
+          end
+        end
+      else
+        log.get().debug("Could not fetch presets from UBT provider (ok: %s).", tostring(ok))
       end
-    end
-  else
-    log.get().debug("Could not fetch presets from UBT provider (ok: %s).", tostring(ok))
-  end
-
-  return combined_presets
-end
-
-local function get_preset_by_name(name)
-  for _, p in ipairs(get_presets()) do
-    if p.name == name then return p end
-  end
-  return nil
+      callback(combined_presets)
+  end)
 end
 
 ---
--- DAP用のLaunch設定(config)を動的に生成する
-local function resolve_launch_config(project_info, preset)
-  if not project_info then return nil end
+-- DAP用のLaunch設定(config)を動的に生成する (Async)
+local function resolve_launch_config(project_info, preset, callback)
+  if not project_info then return callback(nil) end
 
   local preset_name = preset and preset.name or nil
 
-  -- 1. UBTのプロバイダー経由で Launch Config の取得を試みる (推奨)
-  local ok, ubt_launch_config = provider.request("ubt.get_launch_config", { 
-    preset_name = preset_name 
-  })
+  -- 1. UBTのプロバイダー経由で Launch Config の取得を試みる (非同期)
+  provider.request("ubt.get_launch_config", { preset_name = preset_name }, function(ok, ubt_launch_config)
+      if ok and ubt_launch_config and ubt_launch_config.program then
+        log.get().debug("Resolved launch config via UBT provider.")
 
-  if ok and ubt_launch_config and ubt_launch_config.program then
-    log.get().debug("Resolved launch config via UBT provider.")
+        local args = ubt_launch_config.args or {}
+        local resolved_name = ubt_launch_config.preset_name or (preset and preset.name) or "Unknown"
+        
+        callback({
+          name = "UDB Launch: " .. resolved_name,
+          type = get_adapter_type(),
+          request = "launch",
+          program = ubt_launch_config.program,
+          args = args,
+          cwd = ubt_launch_config.cwd or project_info.root,
+          stopOnEntry = false,
+          console = "integratedTerminal",
+        })
+        return
+      end
 
-    local args = ubt_launch_config.args or {}
-    
-    local resolved_name = ubt_launch_config.preset_name or (preset and preset.name) or "Unknown"
-    
-    -- ★★★ 修正箇所: ここにあった「-game」と「-log」の強制追加ロジックを削除 ★★★
-    -- UBTが返した引数構成をそのまま信頼して使用します。
-    -- これにより、Editor構成ならエディタが起動し、Game構成ならゲームが起動します。
+      -- 2. フォールバック (UBTがない場合)
+      if not preset then
+         log.get().warn("UBT provider failed and no preset specified. Cannot resolve launch config.")
+         return callback(nil)
+      end
 
-    return {
-      name = "UDB Launch: " .. resolved_name,
-      type = get_adapter_type(), -- ★ 安全なゲッターを使用
-      request = "launch",
-      program = ubt_launch_config.program,
-      args = args,
-      cwd = ubt_launch_config.cwd or project_info.root,
-      stopOnEntry = false,
-      console = "integratedTerminal",
-    }
-  end
+      log.get().warn("UBT provider failed or not available. Using fallback resolution logic.")
+      
+      local exe_path
+      local args = {}
+      local cwd = project_info.root
+      local is_windows = vim.fn.has("win32") == 1
+      local ext = is_windows and ".exe" or ""
 
-  -- 2. フォールバック (UBTがない場合)
-  if not preset then
-     log.get().warn("UBT provider failed and no preset specified. Cannot resolve launch config.")
-     return nil
-  end
+      if preset.IsEditor then
+        local engine_root, err = unl_finder.engine.find_engine_root(project_info.uproject)
+        if not engine_root then 
+          log.get().error("Engine root not found: %s", tostring(err))
+          return callback(nil)
+        end
 
-  log.get().warn("UBT provider failed or not available. Using fallback resolution logic.")
-  
-  local exe_path
-  local args = {}
-  local cwd = project_info.root
-  
-  local is_windows = vim.fn.has("win32") == 1
-  local ext = is_windows and ".exe" or ""
+        local platform = preset.Platform or "Win64"
+        local config = preset.Configuration or "Development"
+        local editor_exe = "UnrealEditor" .. ext
+        
+        if config ~= "Development" then
+          editor_exe = string.format("UnrealEditor-%s-%s%s", platform, config, ext)
+        end
+        
+        exe_path = fs.joinpath(engine_root, "Engine", "Binaries", platform, editor_exe)
+        table.insert(args, project_info.uproject) 
+        table.insert(args, "-log")
+      else
+        local project_name = vim.fn.fnamemodify(project_info.uproject, ":t:r")
+        local binary_name_parts = { project_name, preset.Platform }
+        if preset.Configuration ~= "Development" then
+          table.insert(binary_name_parts, preset.Configuration)
+        end
+        local binary_name = table.concat(binary_name_parts, "-") .. ext
+        exe_path = fs.joinpath(project_info.root, "Binaries", preset.Platform, binary_name)
+        table.insert(args, "-log")
+      end
 
-  if preset.IsEditor then
-    -- Editor起動モード
-    local engine_root, err = unl_finder.engine.find_engine_root(project_info.uproject)
-    if not engine_root then 
-      log.get().error("Engine root not found: %s", tostring(err))
-      return nil 
-    end
-
-    local platform = preset.Platform or "Win64"
-    local config = preset.Configuration or "Development"
-    local editor_exe = "UnrealEditor" .. ext
-    
-    if config ~= "Development" then
-      editor_exe = string.format("UnrealEditor-%s-%s%s", platform, config, ext)
-    end
-    
-    exe_path = fs.joinpath(engine_root, "Engine", "Binaries", platform, editor_exe)
-    
-    table.insert(args, project_info.uproject) 
-    -- フォールバックロジックでも -game は一旦外しておきます
-    -- table.insert(args, "-game")
-    table.insert(args, "-log")
-  else
-    -- Standalone
-    local project_name = vim.fn.fnamemodify(project_info.uproject, ":t:r")
-    local binary_name_parts = { project_name, preset.Platform }
-    if preset.Configuration ~= "Development" then
-      table.insert(binary_name_parts, preset.Configuration)
-    end
-    local binary_name = table.concat(binary_name_parts, "-") .. ext
-    exe_path = fs.joinpath(project_info.root, "Binaries", preset.Platform, binary_name)
-    
-    table.insert(args, "-log")
-  end
-
-  return {
-    name = "UDB Launch: " .. preset.name,
-    type = get_adapter_type(), -- ★ 安全なゲッターを使用
-    request = "launch",
-    program = exe_path,
-    args = args,
-    cwd = cwd,
-    stopOnEntry = false,
-    console = "integratedTerminal", 
-  }
+      callback({
+        name = "UDB Launch: " .. preset.name,
+        type = get_adapter_type(),
+        request = "launch",
+        program = exe_path,
+        args = args,
+        cwd = cwd,
+        stopOnEntry = false,
+        console = "integratedTerminal", 
+      })
+  end)
 end
 
 ---
@@ -187,35 +167,45 @@ function M.start(opts)
   end
 
   if opts.has_bang then
-    unl_picker.pick({
-      kind = "udb_launch_picker",
-      title = "  Select Launch Target",
-      conf = get_config(),
-      items = get_presets(),
-      logger_name = "UDB",
-      preview_enabled = false,
-      entry_maker = function(item)
-        return { value = item, display = item.name, ordinal = item.name }
-      end,
-      on_submit = function(selected_preset)
-        if not selected_preset then return end
-        
-        local dap_conf = resolve_launch_config(project_info, selected_preset)
-        if dap_conf then launch_dap(dap_conf) end
-      end,
-    })
+    -- 非同期でプリセット取得してからピッカー表示
+    get_presets(function(presets)
+        unl_picker.pick({
+          kind = "udb_launch_picker",
+          title = "  Select Launch Target",
+          conf = get_config(),
+          items = presets,
+          logger_name = "UDB",
+          preview_enabled = false,
+          entry_maker = function(item)
+            return { value = item, display = item.name, ordinal = item.name }
+          end,
+          on_submit = function(selected_preset)
+            if not selected_preset then return end
+            
+            resolve_launch_config(project_info, selected_preset, function(dap_conf)
+                if dap_conf then launch_dap(dap_conf) end
+            end)
+          end,
+        })
+    end)
   else
-    local preset_to_use = nil
-    if opts.label then
-      preset_to_use = get_preset_by_name(opts.label)
-      if not preset_to_use then
-         log.get().warn("Specified preset '%s' not found.", opts.label)
-         return
-      end
-    end
+    local label = opts.label
+    get_presets(function(presets)
+        local preset_to_use = nil
+        if label then
+          for _, p in ipairs(presets) do
+            if p.name == label then preset_to_use = p; break end
+          end
+          if not preset_to_use then
+             log.get().warn("Specified preset '%s' not found.", label)
+             return
+          end
+        end
 
-    local dap_conf = resolve_launch_config(project_info, preset_to_use)
-    if dap_conf then launch_dap(dap_conf) end
+        resolve_launch_config(project_info, preset_to_use, function(dap_conf)
+            if dap_conf then launch_dap(dap_conf) end
+        end)
+    end)
   end
 end
 
