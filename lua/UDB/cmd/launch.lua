@@ -1,5 +1,5 @@
 local unl_finder = require("UNL.finder")
-local unl_picker = require("UNL.backend.picker")
+local unl_picker = require("UNL.picker")
 local provider = require("UNL.provider")
 local log = require("UDB.logger")
 local fs = require("vim.fs")
@@ -169,7 +169,7 @@ function M.start(opts)
   if opts.has_bang then
     -- 非同期でプリセット取得してからピッカー表示
     get_presets(function(presets)
-        unl_picker.pick({
+        unl_picker.open({
           kind = "udb_launch_picker",
           title = "  Select Launch Target",
           conf = get_config(),
@@ -210,3 +210,4 @@ function M.start(opts)
 end
 
 return M
+
